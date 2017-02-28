@@ -77,6 +77,19 @@ dst = np.float32 ([
         [921, 651]
     ])
 
+#h = 1280 #exampleImg_undistort.shape[:2]
+#w = 720
+
+# define source and destination points for transform
+#src = np.float32([(575,464),
+#                  (707,464), 
+#                  (258,682), 
+#                  (1049,682)])
+#dst = np.float32([(450,0),
+#                  (w-450,0),
+#                  (450,h),
+#                  (w-450,h)])
+
 # calculating front view -> top view projection matrix
 M_perspective_720 = cv2.getPerspectiveTransform (src, dst)
 # calculating top -> front view matrix
@@ -89,7 +102,51 @@ def corners_unwarp(img, nx, ny, mtx, dist):
      
     return warped
 
+def morphology_filter (image, s_thresh=(-.1, -.035)):
+    """Filtering lane lines with "opening" morphology operation
+    
+        1. Taking linear combination of
+            HLS S layer * 0.6 + Grayscaled image * 0.4
+    
+        2. Applying opening, as a result we have image with erased lane lines 
+        
+        3. Subtracting image without lane lines from original image and
+            returning lane lines
+    
+    Args:
+        image (np.array): color image in BGR format
+    Returns:
+        np.array: graysacle image with filtered lane lines along with some another parts of the image
+    """
+    
+    gray = cv2.cvtColor (image, cv2.COLOR_BGR2GRAY)
+    hls = cv2.cvtColor(image, cv2.COLOR_RGB2HLS)
+    #H = hls[:,:,0]
+    #L = hls[:,:,1]
+    hls_s = hls[:,:,2]
+    #hls_s = get_s_from_hls (image)
+    src = hls_s * 0.6 + gray * 0.4
 
+    src = np.array( src / 255.).astype ('float32') - 0.5
+
+    blurf = np.zeros((1, 5))
+    blurf.fill (1)
+    src = cv2.filter2D(src, cv2.CV_32F, blurf)
+
+    f = np.zeros((1, 30))
+    f.fill (1)
+    l = cv2.morphologyEx(src, cv2.MORPH_OPEN, f)
+
+    filtered = src - l
+    #kernel = np.ones((5,5),np.float32)/25
+    #dst = cv2.filter2D(filtered,-1,kernel)
+    filtered = cv2.medianBlur(filtered,5)
+    #print(filtered)
+    # Threshold color channel
+    f_binary = np.zeros_like(filtered)
+    f_binary[(filtered >= s_thresh[0]) & (filtered <= s_thresh[1])] = 1
+    
+    return f_binary
 
 # Define a function that applies Sobel x or y, 
 # then takes an absolute value and applies a threshold.
@@ -213,7 +270,7 @@ def dir_threshold(img, sobel_kernel=3, thresh=(0, np.pi/2), space = 'gray', ch=1
     return binary_output
 
 # Edit this function to create your own pipeline.
-def pipeline(img, s_thresh=(170, 255), sx_thresh=(30, 100)):
+def pipeline(img, s_thresh=(140, 255), sx_thresh=(30, 100)):
     img = np.copy(img)
     # Choose a Sobel kernel size
     ksize = 15 # Choose a larger odd number to smooth gradient measurements
@@ -230,9 +287,9 @@ def pipeline(img, s_thresh=(170, 255), sx_thresh=(30, 100)):
     #scaled_combined = np.uint8(255*combined/np.max(combined))
     
     # Convert to HSV color space and separate the V channel
-    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HLS).astype(np.float)
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2YUV).astype(np.float)
     #l_channel = hsv[:,:,1]
-    s_channel = hsv[:,:,2]
+    s_channel = hsv[:,:,1]
     # Sobel x
     #sobelx = cv2.Sobel(l_channel, cv2.CV_64F, 1, 0) # Take the derivative in x
     #abs_sobelx = np.absolute(sobelx) # Absolute x derivative to accentuate lines away from horizontal
@@ -250,10 +307,10 @@ def pipeline(img, s_thresh=(170, 255), sx_thresh=(30, 100)):
     # be beneficial to replace this channel with something else.
     color_binary = np.dstack(( np.zeros_like(combined), combined, s_binary))
     
-    combined_binary = np.zeros_like(combined)
-    combined_binary[(s_binary == 1) | (combined == 1)] = 1
+    d_binary = np.zeros_like(combined)
+    d_binary[(s_binary == 1) | (combined == 1)] = 1
     
-    return combined_binary, color_binary
+    return d_binary, color_binary
     
 
 
